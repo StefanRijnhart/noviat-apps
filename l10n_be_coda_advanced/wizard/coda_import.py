@@ -858,8 +858,7 @@ class AccountCodaImport(models.TransientModel):
     def _create_info_statement(self, coda_statement):
 
         cba = coda_statement['coda_bank_params']
-        ctx = dict(self._context, force_company=cba.company_id.id)
-        st = self.env['coda.bank.statement'].with_context(ctx)
+        st = self.env['coda.bank.statement']
         coda_st = st.create({
             'name': coda_statement['name'],
             'type': coda_statement['type'],
@@ -934,9 +933,7 @@ class AccountCodaImport(models.TransientModel):
         }
 
         try:
-            ctx = dict(self._context, force_company=cba.company_id.id)
-            st = self.env['account.bank.statement'].with_context(ctx)
-            bank_st = st.create(st_vals)
+            bank_st = self.env['account.bank.statement'].create(st_vals)
         except Warning, e:
             self._cr.rollback()
             self.nb_err += 1
@@ -975,8 +972,7 @@ class AccountCodaImport(models.TransientModel):
     def _prepare_statement_line(self, coda_statement, line, coda_parsing_note):
 
         cba = coda_statement['coda_bank_params']
-        ctx = dict(self._context, force_company=cba.company_id.id)
-        coda_st_line = self.env['coda.bank.statement.line'].with_context(ctx)
+        coda_st_line = self.env['coda.bank.statement.line']
 
         if not line['type'] == 'communication':
             if line['trans_family'] in ST_LINE_NAME_FAMILIES:
@@ -1012,12 +1008,9 @@ class AccountCodaImport(models.TransientModel):
                     coda_statement['glob_id_stack'].pop()
                 else:
                     glob_name = line['name'].strip() or '/'
-                    seq_mod = self.env['ir.sequence'].with_context(ctx)
-                    glob_code = seq_mod.next_by_code(
+                    glob_code = self.env['ir.sequence'].next_by_code(
                         'statement.line.global')
-                    glob_mod = self.env[
-                        'account.bank.statement.line.global'
-                        ].with_context(ctx)
+                    glob_mod = self.env['account.bank.statement.line.global']
                     glob_line = glob_mod.create({
                         'code': glob_code,
                         'name': glob_name,
@@ -1220,9 +1213,7 @@ class AccountCodaImport(models.TransientModel):
     def _create_bank_statement_line(self, coda_statement, line):
         st_line_vals = self._prepare_st_line_vals(coda_statement, line)
         cba = coda_statement['coda_bank_params']
-        ctx = dict(self._context, force_company=cba.company_id.id)
-        stl = self.env['account.bank.statement.line'].with_context(ctx)
-        st_line = stl.create(st_line_vals)
+        st_line = self.env['account.bank.statement.line'].create(st_line_vals)
         line['st_line_id'] = st_line.id
 
     def _prepare_mv_line_dict(self, coda_statement, line):
@@ -1316,6 +1307,9 @@ class AccountCodaImport(models.TransientModel):
             elif line[0] == '1':
                 coda_parsing_note = self._coda_record_1(
                     coda_statement, line, coda_parsing_note)
+                cba = coda_statement['coda_bank_params']
+                self = self.with_context(
+                    force_company=cba.company_id.id)
 
             elif line[0] == '2' and not skip:
                 # movement data record 2
