@@ -20,6 +20,7 @@
 #
 ##############################################################################
 
+import base64
 import logging
 _logger = logging.getLogger(__name__)
 import os
@@ -134,11 +135,11 @@ class AccountCodaBatchImport(models.TransientModel):
             try:
                 wiz = coda_import_wiz.create(
                     {'batch': True,
-                     'coda_data': coda_file[1],
+                     'coda_data': base64.encodestring(coda_file[1]),
                      'coda_fname': coda_file[2],
                      'period_id': False,
                      })
-                wiz._coda_parsing()
+                wiz.coda_parsing()
                 self.log_note += _(
                     "\n\nCODA File '%s' has been imported."
                     ) % coda_file[2]

@@ -718,7 +718,7 @@ class AccountCodaImport(models.TransientModel):
         return coda_parsing_note, st_line_seq
 
     def _coda_record_8(self, coda_statement, line, coda_parsing_note,
-                       st_line_seq, period_id):
+                       st_line_seq):
 
         cba = coda_statement['coda_bank_params']
         # get list of lines parsed already
@@ -752,7 +752,8 @@ class AccountCodaImport(models.TransientModel):
             bal_end = - bal_end
         coda_statement['balance_end_real'] = bal_end
 
-        if not period_id:
+        period = self.period_id
+        if not period:
             if coda_statement['new_balance_date']:
                 periods = self.env['account.period'].search(
                     [('date_start', '<=', coda_statement['new_balance_date']),
@@ -765,9 +766,9 @@ class AccountCodaImport(models.TransientModel):
                      ('date_stop', '>=', coda_statement['date']),
                      ('special', '=', False),
                      ('company_id', '=', cba.company_id.id)])
-            period_id = periods and periods[0].id
+            period = periods and periods[0]
         if coda_statement['type'] == 'normal':
-            if not period_id:
+            if not period:
                 err_string = _(
                     "\nThe CODA Statement New Balance date doesn't fall "
                     "within a defined Accounting Period !"
@@ -775,7 +776,6 @@ class AccountCodaImport(models.TransientModel):
                     ) % coda_statement['new_balance_date']
                 raise Warning(_('Data Error !'), err_string)
             else:
-                period = self.env['account.period'].browse(period_id)
                 if period.state == 'done':
                     err_string = _(
                         "\nYou cannot load the CODA Statement "
@@ -784,7 +784,7 @@ class AccountCodaImport(models.TransientModel):
                         "reopen period %s."
                         ) % period.code
                     raise Warning(err_string)
-        coda_statement['period_id'] = period_id
+        coda_statement['period_id'] = period.id
 
         # update coda_statement['name'] with data from 8 record
         if cba.coda_st_naming:
@@ -1278,25 +1278,12 @@ class AccountCodaImport(models.TransientModel):
 
     @api.multi
     def coda_parsing(self):
-        return self._coda_parsing()
-
-    def _coda_parsing(self, codafile=None, codafilename=None, period_id=None,
-                      batch=False):
-
         self = self.with_context(coda_info={})
-        if batch:
-            self._batch = True
-            recordlist = unicode(
-                codafile, 'windows-1252', 'strict').split('\n')
-        else:
-            self.ensure_one()
-            self._batch = False
-            codafile = self.coda_data
-            codafilename = self.coda_fname
-            recordlist = unicode(
-                base64.decodestring(codafile),
-                'windows-1252', 'strict').split('\n')
-            period_id = self.period_id and self.period_id.id or False
+        codafile = self.coda_data
+        codafilename = self.coda_fname
+        recordlist = unicode(
+            base64.decodestring(codafile),
+            'windows-1252', 'strict').split('\n')
 
         self.error_log = ''
         self.coda_import_note = ''
@@ -1348,8 +1335,7 @@ class AccountCodaImport(models.TransientModel):
             elif line[0] == '8' and not skip:
                 # new balance record
                 coda_parsing_note = self._coda_record_8(
-                    coda_statement, line, coda_parsing_note, st_line_seq,
-                    period_id)
+                    coda_statement, line, coda_parsing_note, st_line_seq)
 
             elif line[0] == '9':
                 # footer record
@@ -1363,8 +1349,6 @@ class AccountCodaImport(models.TransientModel):
         if not self.coda_id:
             err_string = ''
             try:
-                if self._batch:
-                    codafile = base64.encodestring(codafile)
                 coda = self.env['account.coda'].create({
                     'name': codafilename,
                     'coda_data': codafile,
@@ -1526,7 +1510,7 @@ class AccountCodaImport(models.TransientModel):
                 + coda_note_footer
             self.coda_id.write({'note': old_note + note, 'state': 'done'})
             self._cr.commit()
-            if self._batch:
+            if self.batch:
                 return None
         else:
             raise Warning(
