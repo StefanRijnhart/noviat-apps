@@ -41,6 +41,9 @@ class AccountCodaBatchImport(models.TransientModel):
         default=lambda self: self._default_directory(),
         help='Folder containing the CODA Files for the batch import.')
     note = fields.Text(string='Batch Import Log', readonly=True)
+    err_log = fields.Text()
+    log_note = fields.Text()
+    nb_err = fields.Integer()
 
     @api.model
     def _default_directory(self):
@@ -113,9 +116,9 @@ class AccountCodaBatchImport(models.TransientModel):
         log_date = time.strftime('%Y-%m-%d %H:%M:%S')
         log_header = _('>>> Import by %s. Results:') % self.env.user.name
         log_footer = _('\n\nNumber of files : %s\n\n') % str(len(files))
-        self._log_note = ''
-        self._nb_err = 0
-        self._err_log = ''
+        self.log_note = ''
+        self.nb_err = 0
+        self.err_log = ''
 
         if not restart:
             coda_batch = batch_obj.create(
@@ -129,21 +132,26 @@ class AccountCodaBatchImport(models.TransientModel):
         for coda_file in coda_files:
             time_start = time.time()
             try:
-                coda_import_wiz._coda_parsing(
-                    codafile=coda_file[1], codafilename=coda_file[2],
-                    period_id=None, batch=True)
-                self._log_note += _(
+                wiz = coda_import_wiz.create(
+                    {'batch': True,
+                     'coda_data': coda_file[1],
+                     'coda_fname': coda_file[2],
+                     'period_id': False,
+                     })
+                wiz._coda_parsing()
+                self.log_note += _(
                     "\n\nCODA File '%s' has been imported."
                     ) % coda_file[2]
+                self.nb_err += wiz.nb_err
             except Warning, e:
-                self._nb_err += 1
-                self._err_log += _(
+                self.nb_err += 1
+                self.err_log += _(
                     "\n\nError while processing CODA File '%s' :\n%s"
                     ) % (coda_file[2], ''.join(e.args))
             except:
-                self._nb_err += 1
+                self.nb_err += 1
                 tb = ''.join(format_exception(*exc_info()))
-                self._err_log += _(
+                self.err_log += _(
                     "\n\nError while processing CODA File '%s' :\n%s"
                     ) % (coda_file[2], tb)
             file_import_time = time.time() - time_start
@@ -151,13 +159,13 @@ class AccountCodaBatchImport(models.TransientModel):
                 'File %s processing time = %.3f seconds',
                 coda_file[2], file_import_time)
 
-        if self._nb_err:
+        if self.nb_err:
             log_state = 'error'
         else:
             log_state = 'done'
 
-        if self._err_log or self._log_note:
-            note = self._err_log + self._log_note
+        if self.err_log or self.log_note:
+            note = self.err_log + self.log_note
 
         log_obj.create({
             'batch_id': coda_batch.id,
@@ -165,7 +173,7 @@ class AccountCodaBatchImport(models.TransientModel):
             'state': log_state,
             'note': note,
             'file_count': len(files),
-            'error_count': self._nb_err,
+            'error_count': self.nb_err,
             })
         coda_batch.state = log_state
 
@@ -204,27 +212,27 @@ class AccountCodaBatchImport(models.TransientModel):
         }
 
     def _msg_duplicate(self, filename):
-        self._nb_err += 1
-        self._err_log += _(
+        self.nb_err += 1
+        self.err_log += _(
             "\n\nError while processing CODA File '%s' :"
             ) % (filename)
-        self._err_log += _(
+        self.err_log += _(
             "\nThis CODA File is marked by your bank as a 'Duplicate' !"
             )
-        self._err_log += _(
+        self.err_log += _(
             '\nPlease treat this CODA File manually !')
 
     def _msg_exception(self, filename):
-        self._nb_err += 1
-        self._err_log += _(
+        self.nb_err += 1
+        self.err_log += _(
             "\n\nError while processing CODA File '%s' :") % (filename)
-        self._err_log += _('\nInvalid Header Record !')
+        self.err_log += _('\nInvalid Header Record !')
 
     def _msg_noheader(self, filename):
-        self._nb_err += 1
-        self._err_log += _(
+        self.nb_err += 1
+        self.err_log += _(
             "\n\nError while processing CODA File '%s' :") % (filename)
-        self._err_log += _("\nMissing Header Record !")
+        self.err_log += _("\nMissing Header Record !")
 
     def _sort_files(self, path, files):
         """
@@ -238,11 +246,11 @@ class AccountCodaBatchImport(models.TransientModel):
                 recordlist = unicode(
                     data, 'windows-1252', 'strict').split('\n')
                 if not recordlist:
-                    self._nb_err += 1
-                    self._err_log += _(
+                    self.nb_err += 1
+                    self.err_log += _(
                         "\n\nError while processing CODA File '%s' :"
                         ) % (filename)
-                    self._err_log += _("\nEmpty File !")
+                    self.err_log += _("\nEmpty File !")
                 else:
                     for line in recordlist:
                         if not line:

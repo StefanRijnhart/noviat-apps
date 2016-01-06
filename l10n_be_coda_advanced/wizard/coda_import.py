@@ -51,12 +51,7 @@ class AccountCodaImport(models.TransientModel):
     _name = 'account.coda.import'
     _description = 'Import CODA File'
 
-    """
-    Set the _skip_undefined attrivtue to skip Bank Statements
-    which have not been defined in the CODA configuration.
-    """
-    _skip_undefined = False
-
+    coda_id = fields.Many2one('account.coda')
     coda_data = fields.Binary(string='CODA File', required=True)
     coda_fname = fields.Char(
         string='CODA Filename', default='', required=True)
@@ -67,6 +62,23 @@ class AccountCodaImport(models.TransientModel):
         domain=[('state', '=', 'draft'), ('special', '=', False)],
         help="Keep empty to use the period of the bank statement date.")
     note = fields.Text(string='Log')
+    trans_types = fields.Many2many(
+        comodel_name='account.coda.trans.type',
+        default=lambda s: s.env['account.coda.trans.type'].search([]))
+    trans_codes = fields.Many2many(
+        comodel_name='account.coda.trans.code',
+        default=lambda s: s.env['account.coda.trans.code'].search([]))
+    trans_categs = fields.Many2many(
+        comodel_name='account.coda.trans.category',
+        default=lambda s: s.env['account.coda.trans.category'].search([]))
+    comm_types = fields.Many2many(
+        comodel_name='account.coda.comm.type',
+        default=lambda s: s.env['account.coda.comm.type'].search([]))
+    coda_import_note = fields.Text()
+    coda_import_note = fields.Text()
+    error_log = fields.Text()
+    nb_err = fields.Integer()
+    err_string = fields.Text()
 
     @api.onchange('coda_data')
     def onchange_fdata(self):
@@ -139,7 +151,7 @@ class AccountCodaImport(models.TransientModel):
                 return True
             return False
 
-        cba = filter(cba_filter, self._coda_banks)
+        cba = filter(cba_filter, self.env['coda.bank.account'].search([]))
 
         if cba:
             cba = cba[0]
@@ -148,35 +160,21 @@ class AccountCodaImport(models.TransientModel):
             company_banks = self.env['res.partner.bank'].search(
                 [('company_id', '=', cba.company_id.id)])
             company_bank_accounts = [b.acc_number for b in company_banks]
-            self._company_bank_accounts = [
+            self._context['coda_info']['company_bank_accounts'] = [
                 x.replace(' ', '')
                 for x in company_bank_accounts]
         else:
-            if self._skip_undefined:
-                self._coda_import_note += _(
-                    "\n\nNo matching CODA Bank Account Configuration "
-                    "record found !") + \
-                    _("\nPlease check if the 'Bank Account Number', "
-                      "'Currency' and 'Account Description' fields "
-                      "of your configuration record match with"
-                      " '%s', '%s' and '%s' if you need to import "
-                      "statements for this Bank Account Number !"
-                      ) % (coda_statement['acc_number'],
-                           coda_statement['currency'],
-                           coda_statement['description'])
-                skip = True
-            else:
-                err_string = _(
-                    "\nNo matching CODA Bank Account Configuration "
-                    "record found !") + \
-                    _("\nPlease check if the 'Bank Account Number', "
-                      "'Currency' and 'Account Description' fields "
-                      "of your configuration record match with"
-                      " '%s', '%s' and '%s' !"
-                      ) % (coda_statement['acc_number'],
-                           coda_statement['currency'],
-                           coda_statement['description'])
-                raise Warning(_('Data Error !'), err_string)
+            err_string = _(
+                "\nNo matching CODA Bank Account Configuration "
+                "record found !") + \
+                _("\nPlease check if the 'Bank Account Number', "
+                  "'Currency' and 'Account Description' fields "
+                  "of your configuration record match with"
+                  " '%s', '%s' and '%s' !"
+                ) % (coda_statement['acc_number'],
+                     coda_statement['currency'],
+                     coda_statement['description'])
+            raise Warning(_('Data Error !'), err_string)
         bal_start = list2float(line[43:58])  # old balance data
         if line[42] == '1':  # 1= Debit
             bal_start = - bal_start
@@ -187,7 +185,7 @@ class AccountCodaImport(models.TransientModel):
         coda_statement['coda_seq_number'] = line[125:128]
 
         if cba.state == 'skip':
-            self._coda_import_note += _(
+            self.coda_import_note += _(
                 "\n\nThe CODA File contains a statement which is not "
                 "processed since the associated CODA Bank Account "
                 "Configuration record is defined as type 'Skip' !"
@@ -220,13 +218,13 @@ class AccountCodaImport(models.TransientModel):
                 }
             # We have to skip the already processed statements
             # when we reprocess CODA file
-            if self._coda_id:
+            if self.coda_id:
                 if cba.state == 'normal':
                     search_model = self.env['account.bank.statement']
                 else:
                     search_model = self.env['coda.bank.statement']
                 old_statements = search_model.search(
-                    [('coda_id', '=', self._coda_id),
+                    [('coda_id', '=', self.coda_id.id),
                      ('name', '=', coda_statement['name'])])
                 if old_statements:
                     skip = True
@@ -333,7 +331,7 @@ class AccountCodaImport(models.TransientModel):
         st_line['trans_type'] = line[53]
         trans_type = filter(
             lambda x: st_line['trans_type'] == x.type,
-            self._trans_types)
+            self.trans_types)
         if not trans_type:
             err_string = _(
                 "\nThe File contains an invalid CODA Transaction Type : %s !"
@@ -403,7 +401,7 @@ class AccountCodaImport(models.TransientModel):
         trans_family = filter(
             lambda x: (x.type == 'family') and (
                 x.code == st_line['trans_family']),
-            self._trans_codes)
+            self.trans_codes)
         if not trans_family:
             err_string = _(
                 "\nThe File contains an invalid "
@@ -418,7 +416,7 @@ class AccountCodaImport(models.TransientModel):
             lambda x:
             (x.type == 'code') and (x.code == st_line['trans_code'])
             and (trans_family.id == x.parent_id.id),
-            self._trans_codes)
+            self.trans_codes)
         if trans_code:
             st_line['trans_code_id'] = trans_code[0].id
             st_line['trans_code_desc'] = trans_code[0].description
@@ -430,7 +428,7 @@ class AccountCodaImport(models.TransientModel):
         st_line['trans_category'] = line[58:61]
         trans_category = filter(
             lambda x: st_line['trans_category'] == x.category,
-            self._trans_categs)
+            self.trans_categs)
         if trans_category:
             st_line['trans_category_id'] = trans_category[0].id
             st_line['trans_category_desc'] = trans_category[0].description
@@ -444,7 +442,7 @@ class AccountCodaImport(models.TransientModel):
             st_line['struct_comm_type'] = line[62:65]
             comm_type = filter(
                 lambda x: x.code == st_line['struct_comm_type'],
-                self._comm_types)
+                self.comm_types)
             if not comm_type:
                 err_string = _(
                     "\nThe File contains an invalid "
@@ -612,7 +610,7 @@ class AccountCodaImport(models.TransientModel):
         info_line['trans_type'] = line[31]
         trans_type = filter(
             lambda x: x.type == info_line['trans_type'],
-            self._trans_types)
+            self.trans_types)
         if not trans_type:
             err_string = _(
                 "\nThe File contains an invalid CODA Transaction Type : %s !"
@@ -623,7 +621,7 @@ class AccountCodaImport(models.TransientModel):
         trans_family = filter(
             lambda x: (x.type == 'family')
             and (x.code == info_line['trans_family']),
-            self._trans_codes)
+            self.trans_codes)
         if not trans_family:
             err_string = _(
                 "\nThe File contains an invalid CODA Transaction Family : %s !"
@@ -636,7 +634,7 @@ class AccountCodaImport(models.TransientModel):
             lambda x: (x.type == 'code')
             and (x.code == info_line['trans_code'])
             and (x.parent_id.id == trans_family.id),
-            self._trans_codes)
+            self.trans_codes)
         if trans_code:
             info_line['trans_code_desc'] = trans_code[0].description
         else:
@@ -645,7 +643,7 @@ class AccountCodaImport(models.TransientModel):
         info_line['trans_category'] = line[36:39]
         trans_category = filter(
             lambda x: x.category == info_line['trans_category'],
-            self._trans_categs)
+            self.trans_categs)
         if trans_category:
             info_line['trans_category_desc'] = \
                 trans_category[0].description
@@ -657,7 +655,7 @@ class AccountCodaImport(models.TransientModel):
             info_line['struct_comm_type'] = line[40:43]
             comm_type = filter(
                 lambda x: x.code == info_line['struct_comm_type'],
-                self._comm_types)
+                self.comm_types)
             if not comm_type:
                 err_string = _(
                     "\nThe File contains an invalid "
@@ -805,13 +803,13 @@ class AccountCodaImport(models.TransientModel):
                 }
             # We have to skip the already processed statements
             # when we reprocess CODA file
-            if self._coda_id:
+            if self.coda_id:
                 if cba.state == 'normal':
                     search_model = self.env['account.bank.statement']
                 else:
                     search_model = self.env['coda.bank.statement']
                 old_statements = search_model.search(
-                    [('coda_id', '=', self._coda_id),
+                    [('coda_id', '=', self.coda_id.id),
                      ('name', '=', coda_statement['name'])])
                 if old_statements:
                     coda_statement['skip'] = True
@@ -867,7 +865,7 @@ class AccountCodaImport(models.TransientModel):
             'type': coda_statement['type'],
             'coda_bank_account_id': cba.id,
             'currency_id': cba.currency_id.id,
-            'coda_id': self._coda_id,
+            'coda_id': self.coda_id.id,
             'date': coda_statement['date'],
             'coda_creation_date': coda_statement['coda_creation_date'],
             'old_balance_date': coda_statement['old_balance_date'],
@@ -900,8 +898,8 @@ class AccountCodaImport(models.TransientModel):
                      == journal.default_debit_account_id):
                 balance_start_check = journal.default_debit_account_id.balance
             else:
-                self._nb_err += 1
-                self._err_string += _(
+                self.nb_err += 1
+                self.err_string += _(
                     "'\nConfiguration Error in journal %s!"
                     "\nPlease verify the Default Debit and Credit Account "
                     "settings.") % journal.name
@@ -916,8 +914,8 @@ class AccountCodaImport(models.TransientModel):
                      coda_statement['balance_start'],
                      balance_start_check, journal.name)
             if cba.balance_start_enforce:
-                self._nb_err += 1
-                self._err_string += balance_start_err_string
+                self.nb_err += 1
+                self.err_string += balance_start_err_string
                 return bank_st
             else:
                 coda_statement[
@@ -926,7 +924,7 @@ class AccountCodaImport(models.TransientModel):
         st_vals = {
             'name': coda_statement['name'],
             'journal_id': journal.id,
-            'coda_id': self._coda_id,
+            'coda_id': self.coda_id.id,
             'date': coda_statement['new_balance_date'],
             'period_id': coda_statement['period_id'],
             'balance_start': coda_statement['balance_start'],
@@ -941,32 +939,32 @@ class AccountCodaImport(models.TransientModel):
             bank_st = st.create(st_vals)
         except Warning, e:
             self._cr.rollback()
-            self._nb_err += 1
-            self._err_string += _('\nError ! ') + str(e)
+            self.nb_err += 1
+            self.err_string += _('\nError ! ') + str(e)
             tb = ''.join(format_exception(*exc_info()))
             _logger.error(
                 "Application Error while processing Statement %s\n%s",
                 coda_statement.get('name', '/'), tb)
         except orm.except_orm, e:
             self._cr.rollback()
-            self._nb_err += 1
-            self._err_string += _('\nError ! ') + str(e)
+            self.nb_err += 1
+            self.err_string += _('\nError ! ') + str(e)
             tb = ''.join(format_exception(*exc_info()))
             _logger.error(
                 "Application Error while processing Statement %s\n%s",
                 coda_statement.get('name', '/'), tb)
         except Exception, e:
             self._cr.rollback()
-            self._nb_err += 1
-            self._err_string += _('\nSystem Error : ') + str(e)
+            self.nb_err += 1
+            self.err_string += _('\nSystem Error : ') + str(e)
             tb = ''.join(format_exception(*exc_info()))
             _logger.error(
                 "System Error while processing Statement %s\n%s",
                 coda_statement.get('name',  '/'), tb)
         except:
             self._cr.rollback()
-            self._nb_err += 1
-            self._err_string = _('\nUnknown Error')
+            self.nb_err += 1
+            self.err_string = _('\nUnknown Error')
             tb = ''.join(format_exception(*exc_info()))
             _logger.error(
                 "Unknown Error while processing Statement %s\n%s",
@@ -1285,6 +1283,7 @@ class AccountCodaImport(models.TransientModel):
     def _coda_parsing(self, codafile=None, codafilename=None, period_id=None,
                       batch=False):
 
+        self = self.with_context(coda_info={})
         if batch:
             self._batch = True
             recordlist = unicode(
@@ -1299,15 +1298,8 @@ class AccountCodaImport(models.TransientModel):
                 'windows-1252', 'strict').split('\n')
             period_id = self.period_id and self.period_id.id or False
 
-        self._coda_id = self._context.get('coda_id')
-        self._coda_banks = self.env['coda.bank.account'].search([])
-        self._trans_types = self.env['account.coda.trans.type'].search([])
-        self._trans_codes = self.env['account.coda.trans.code'].search([])
-        self._trans_categs = self.env[
-            'account.coda.trans.category'].search([])
-        self._comm_types = self.env['account.coda.comm.type'].search([])
-        self._error_log = ''
-        self._coda_import_note = ''
+        self.error_log = ''
+        self.coda_import_note = ''
         coda_statements = []
 
         # parse lines in coda file and store result in coda_statements list
@@ -1327,11 +1319,12 @@ class AccountCodaImport(models.TransientModel):
                 coda_parsing_note = self._coda_record_0(
                     coda_statement, line, coda_parsing_note)
 
-                if not self._coda_id:
+                if not self.coda_id:
                     codas = self.env['account.coda'].search(
                         [('name', '=', codafilename),
                          ('coda_creation_date', '=', coda_statement['date'])])
-                    self._coda_id = codas and codas[0].id or False
+                    if codas:
+                        self.coda_id = codas[0]
 
             elif line[0] == '1':
                 coda_parsing_note = self._coda_record_1(
@@ -1367,7 +1360,7 @@ class AccountCodaImport(models.TransientModel):
 
         # end for line in recordlist:
 
-        if not self._coda_id:
+        if not self.coda_id:
             err_string = ''
             try:
                 if self._batch:
@@ -1379,7 +1372,7 @@ class AccountCodaImport(models.TransientModel):
                     'date': fields.Date.context_today(self),
                     'user_id': self._uid,
                     })
-                self._coda_id = coda.id
+                self.write({'coda_id': coda.id})
                 self._cr.commit()
 
             except orm.except_orm, e:
@@ -1394,8 +1387,8 @@ class AccountCodaImport(models.TransientModel):
             if err_string:
                 raise Warning(_('CODA Import failed !'), err_string)
 
-        self._nb_err = 0
-        self._err_string = ''
+        self.nb_err = 0
+        self.err_string = ''
         coda_st_ids = []
         bank_st_ids = []
 
@@ -1482,7 +1475,7 @@ class AccountCodaImport(models.TransientModel):
 
             coda_statement['coda_parsing_note'] = coda_parsing_note
 
-            self._coda_import_note = self._coda_import_note + \
+            self.coda_import_note = self.coda_import_note + \
                 _('\n\nBank Journal: %s'
                   '\nCODA Version: %s'
                   '\nCODA Sequence Number: %s'
@@ -1507,7 +1500,7 @@ class AccountCodaImport(models.TransientModel):
                            'name': coda_statement['name']})
 
             if coda_statement.get('separate_application') != '00000':
-                self._coda_import_note += _(
+                self.coda_import_note += _(
                     "'\nCode Separate Application: %s"
                     ) % coda_statement['separate_application']
             if coda_statement['type'] == 'normal' \
@@ -1524,27 +1517,25 @@ class AccountCodaImport(models.TransientModel):
         coda_note_header += " %s :" % self.env.user.name
         coda_note_footer = '\n\n' + _("Number of statements processed") \
             + ' : ' + str(len(coda_statements))
-        self._error_log = self._error_log + '\n' + _("Number of errors") + ' : ' \
-            + str(self._nb_err) + '\n'
+        self.error_log = self.error_log + '\n' + _("Number of errors") + ' : ' \
+            + str(self.nb_err) + '\n'
 
-        if not self._nb_err:
-            coda = self.env['account.coda'].browse(self._coda_id)
-            old_note = coda.note and (coda.note + '\n\n') or ''
-            note = coda_note_header + self._coda_import_note \
+        if not self.nb_err:
+            old_note = self.coda_id.note and (self.coda_id.note + '\n\n') or ''
+            note = coda_note_header + self.coda_import_note \
                 + coda_note_footer
-            coda.write({'note': old_note + note, 'state': 'done'})
+            self.coda_id.write({'note': old_note + note, 'state': 'done'})
             self._cr.commit()
             if self._batch:
                 return None
         else:
             raise Warning(
-                _("CODA Import failed !"), self._err_string)
+                _("CODA Import failed !"), self.err_string)
 
         self.note = note
 
         ctx = self._context.copy()
         ctx.update({
-            'coda_id': self._coda_id,
             'bk_st_ids': bank_st_ids,
             'coda_st_ids': coda_st_ids,
             })
@@ -1935,7 +1926,7 @@ class AccountCodaImport(models.TransientModel):
         if cp_number:
             transfer_accounts = filter(
                 lambda x: cp_number in x,
-                self._company_bank_accounts)
+                self._context['coda_info']['company_bank_accounts'])
             if transfer_accounts:
                 # exclude transactions from
                 # counterparty_number = bank account number of this statement
@@ -2287,7 +2278,7 @@ class AccountCodaImport(models.TransientModel):
         comm_type = line['struct_comm_type']
         comm = st_line_comm = line['communication']
         st_line_name = filter(
-            lambda x: x.code == comm_type, self._comm_types)[0].description
+            lambda x: x.code == comm_type, self.comm_types)[0].description
         amount_currency_account = list2float(comm[0:15])
         amount_currency_original = list2float(comm[15:30])
         rate = number2float(comm[30:42], 8)
@@ -2713,7 +2704,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = '\n' + INDENT + st_line_name
         val = comm[0:70].strip()
         if val:
@@ -2735,7 +2726,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = comm.strip()
         return st_line_name, st_line_comm
 
@@ -2744,7 +2735,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = comm.strip()
         return st_line_name, st_line_comm
 
@@ -2753,7 +2744,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = comm.strip()
         return st_line_name, st_line_comm
 
@@ -2765,7 +2756,7 @@ class AccountCodaImport(models.TransientModel):
             + ('%.2f' % list2float(comm[33:48])) + ' ' + comm[30:33]
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = '\n' + INDENT + st_line_name + INDENT \
             + _('Description of the detail') + ': %s' % comm[0:30].strip()
         st_line_comm += INDENT + _('Amount') \
@@ -2779,7 +2770,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = '\n' + INDENT + st_line_name + INDENT \
             + _('Number of notes/coins') + ': %s' % comm[0:7]
         st_line_comm += INDENT + _('Note/coin denomination') \
@@ -2793,7 +2784,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = '\n' + INDENT + st_line_name + INDENT + _('Name') \
             + ': %s' % comm[0:70].strip()
         st_line_comm += INDENT + _('Identification Code') \
@@ -2805,7 +2796,7 @@ class AccountCodaImport(models.TransientModel):
         comm = line['communication']
         st_line_name = filter(
             lambda x: x.code == comm_type,
-            self._comm_types)[0].description
+            self.comm_types)[0].description
         st_line_comm = '\n' + INDENT + st_line_name + INDENT + _('Name') \
             + ': %s' % comm[0:70].strip()
         st_line_comm += INDENT + _('Identification Code') \

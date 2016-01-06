@@ -77,6 +77,7 @@ class AccountCoda(models.Model):
         wiz_vals = {
             'coda_data': self.coda_data,
             'coda_fname': self.name,
+            'coda_id': self.id,
             }
         wizard = self.env['account.coda.import'].create(wiz_vals)
         module = __name__.split('addons.')[1].split('.')[0]
@@ -90,6 +91,6 @@ class AccountCoda(models.Model):
             'res_model': wizard._name,
             'view_id': wiz_view.id,
             'target': 'new',
-            'context': dict(self._context, coda_id=self.id),
+            'context': self._context,
             'type': 'ir.actions.act_window',
             }
