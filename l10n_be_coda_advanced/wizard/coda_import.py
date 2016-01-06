@@ -64,15 +64,19 @@ class AccountCodaImport(models.TransientModel):
     note = fields.Text(string='Log')
     trans_types = fields.Many2many(
         comodel_name='account.coda.trans.type',
+        relation = 'coda_import_trans_type_rel',
         default=lambda s: s.env['account.coda.trans.type'].search([]))
     trans_codes = fields.Many2many(
         comodel_name='account.coda.trans.code',
+        relation = 'coda_import_trans_code_rel',
         default=lambda s: s.env['account.coda.trans.code'].search([]))
     trans_categs = fields.Many2many(
         comodel_name='account.coda.trans.category',
+        relation = 'coda_import_trans_categ_rel',
         default=lambda s: s.env['account.coda.trans.category'].search([]))
     comm_types = fields.Many2many(
         comodel_name='account.coda.comm.type',
+        relation = 'coda_import_comm_type_rel',
         default=lambda s: s.env['account.coda.comm.type'].search([]))
     coda_import_note = fields.Text()
     coda_import_note = fields.Text()
@@ -1212,7 +1216,6 @@ class AccountCodaImport(models.TransientModel):
 
     def _create_bank_statement_line(self, coda_statement, line):
         st_line_vals = self._prepare_st_line_vals(coda_statement, line)
-        cba = coda_statement['coda_bank_params']
         st_line = self.env['account.bank.statement.line'].create(st_line_vals)
         line['st_line_id'] = st_line.id
 
