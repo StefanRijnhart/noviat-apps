@@ -1277,6 +1277,7 @@ class AccountCodaImport(models.TransientModel):
             err_string = _('\nUnknown Error : ') + str(e)
         if err_string:
             coda_statement['coda_parsing_note'] += err_string
+            _logger.debug('Error reconciling line %s: %s', line, err_string)
 
     @api.multi
     def coda_parsing(self):
@@ -1401,6 +1402,7 @@ class AccountCodaImport(models.TransientModel):
 
         for coda_statement in coda_statements:
 
+            t0 = time.time()
             bank_st = coda_st = False
             cba = coda_statement['coda_bank_params']
             self._coda_statement_hook(coda_statement)
@@ -1449,17 +1451,29 @@ class AccountCodaImport(models.TransientModel):
                         bank_st_lines += res_line_hook
 
             # creation of bank statement lines, account moves
+            # with deferred computation of function fields
             if coda_statement['type'] == 'normal':
                 # resequence since _st_line_hook may add/remove lines
                 st_line_seq = 0
                 st_balance_end = round(coda_statement['balance_start'], 2)
+                _logger.debug(
+                    'Creating %s bank statement lines', len(bank_st_lines))
                 for st_line in bank_st_lines:
                     st_line_seq += 1
                     st_line['sequence'] = st_line_seq
                     st_balance_end += round(st_line['amount'], 2)
-                    self._create_bank_statement_line(coda_statement, st_line)
+                    self.with_context(recompute=False)._create_bank_statement_line(coda_statement, st_line)
+
+                _logger.debug('Recomputing computed fields')
+                t1 = time.time()
+                self.force_recompute()
+                _logger.debug('Recomputing took %s', time.time() - t1)
+
+                # Second pass: create move and reconcile
+                _logger.debug('Checking for moves to create and reconcile')
+                for st_line in bank_st_lines:
                     if st_line.get('reconcile') or st_line.get('account_id'):
-                        self._create_move_and_reconcile(
+                        self.with_context(prefetch_single=True)._create_move_and_reconcile(
                             coda_statement, st_line)
 
                 if round(st_balance_end
@@ -1516,6 +1530,7 @@ class AccountCodaImport(models.TransientModel):
 
             # commit after each statement in the coda file
             self._cr.commit()
+            _logger.debug('Statement took %s seconds', (time.time() - t0))
 
         # end 'for coda_statement in coda_statements'
 
@@ -2811,3 +2826,71 @@ class AccountCodaImport(models.TransientModel):
         st_line_comm += INDENT + _('Identification Code') \
             + ': %s' % comm[70:105].strip()
         return st_line_name, st_line_comm
+
+    def force_recompute(self):
+        """ Recompute old and new API computed and related fields as is done
+        in core Odoo, but take some shortcuts for performance reasons """
+        done = []
+        while self.env.recompute_old:
+            groups = {}
+            for order, model, ids, field_spec in self.env.recompute_old:
+                for field in field_spec:
+                    key = (order, model, field)
+                    groups[key] = groups.get(key, [])
+                    groups[key] += ids
+                    recompute_old = []
+            # Handle some related fields by an SQL query
+            for key, val in groups.iteritems():
+                if (key[1] == 'account.bank.statement.line' and
+                        key[2] in ['journal_id', 'company_id']):
+                    self.env.cr.execute(
+                        """
+                        UPDATE account_bank_statement_line absl
+                        SET %(field)s = abs.%(field)s
+                        FROM account_bank_statement abs
+                        WHERE absl.id IN %%s
+                            AND absl.statement_id = abs.id
+                        """ % {'field': key[2]}, (tuple(val),))
+                else:
+                    recompute_old.append(
+                        (key[0], key[1], list(set(val)), [key[2]]))
+            self.env.clear_recompute_old()
+            for __, model_name, ids, fields2 in sorted(recompute_old):
+                if not (model_name, ids, fields2) in done:
+                    self.pool[model_name]._store_set_values(
+                        self.env.cr, self.env.uid, ids, fields2,
+                        context=self.env.context)
+                    done.append((model_name, ids, fields2))
+
+            # Now do the same for related fields from the new API
+            # (these come from l10n_be_coda_advanced)
+            for field in self.env.all.todo.keys():
+                if (field.name == 'journal_code' and
+                        field.model_name == 'account.bank.statement.line'):
+                    res_ids = []
+                    for recordset in self.env.all.todo[field]:
+                        res_ids += recordset._ids
+                    self.env.cr.execute(
+                        """ UPDATE account_bank_statement_line absl
+                        SET journal_code = aj.code
+                        FROM account_bank_statement abs,
+                            account_journal aj
+                        WHERE absl.statement_id = abs.id
+                            AND abs.journal_id = aj.id
+                            AND absl.id IN %s """,
+                        (tuple(set(res_ids)),))
+                    del self.env.all.todo[field]
+                elif (field.name == 'state' and
+                      field.model_name == 'account.bank.statement.line'):
+                    res_ids = []
+                    for recordset in self.env.all.todo[field]:
+                        res_ids += recordset._ids
+                    self.env.cr.execute(
+                        """ UPDATE account_bank_statement_line absl
+                        SET state = abs.state
+                        FROM account_bank_statement abs
+                        WHERE absl.statement_id = abs.id
+                            AND absl.id IN %s """,
+                        (tuple(set(res_ids)),))
+                    del self.env.all.todo[field]
+            self.recompute()

@@ -325,7 +325,7 @@ class AccountBankStatementLine(models.Model):
         """
         # cf. https://github.com/odoo/odoo/pull/8397
         if not vals.get('sequence'):
-            lines = self.search(
+            lines = self.with_context(prefetch_fields=False).search(
                 [('statement_id', '=', vals.get('statement_id'))],
                 order='sequence desc', limit=1)
             if lines:
