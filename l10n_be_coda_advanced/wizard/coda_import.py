@@ -135,7 +135,8 @@ class AccountCodaImport(models.TransientModel):
                 coda_bank.description2 or '']
             if coda_statement['acc_number'] in cba_numbers \
                     and coda_statement['currency'] == cba_currency \
-                    and coda_statement['description'] in cba_descriptions:
+                    and (not coda_bank.verify_description or
+                         coda_statement['description'] in cba_descriptions):
                 return True
             return False
 

@@ -42,6 +42,9 @@ class CodaBankAccount(models.Model):
         string='Secondary Account Description', size=35,
         help="The Primary or Secondary Account Description should match "
              "the corresponding Account Description in the CODA file.")
+    verify_description = fields.Boolean(
+        help='Verify that the description on the bank statement is equal to '
+             'one of the descriptions above', default=True)
     state = fields.Selection(
         [('normal', 'Normal'),
          ('skip', 'Skip'),

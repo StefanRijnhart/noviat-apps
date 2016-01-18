@@ -539,6 +539,15 @@ msgstr "Resultaat :"
 msgid "Close"
 msgstr "Sluiten"
 
+#: field:coda.bank.account,verify_description:0
+msgid "Verify description"
+msgstr "Omschrijving controleren"
+
+#. module: l10n_be_coda_advanced
+#: help:coda.bank.account,verify_description:0
+msgid "Verify that the description on the bank statement is equal to one of the descriptions above"
+msgstr "Controleer of de omschrijving op het bankafschrift gelijk is aan één van bovenstaande omschrijvingen"
+
 #. module: l10n_be_coda_advanced
 #: view:account.coda.import:0
 msgid "View Bank Statement(s)"

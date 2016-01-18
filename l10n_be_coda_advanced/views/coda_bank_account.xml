@@ -52,6 +52,7 @@
             <field name="description1"/>
             <field name="currency_id"/>
             <field name="description2"/>
+            <field name="verify_description"/>
             <field name="coda_st_naming"/>
             <field name="state"/>
             <field name="journal_id" attrs="{'invisible':[('state','in',['info','skip'])]}"/>
