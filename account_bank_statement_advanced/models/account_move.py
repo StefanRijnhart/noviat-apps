@@ -104,4 +104,5 @@ class AccountMoveLine(models.Model):
                         % (st.name, move_line.move_id.name,
                            move_line.move_id.id, vals))
         return super(AccountMoveLine, self).write(
-            cr, uid, ids, vals, context, check, update_check)
+            cr, uid, ids, vals, context=context, check=check,
+            update_check=update_check)
