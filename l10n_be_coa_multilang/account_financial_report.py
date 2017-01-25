@@ -131,7 +131,8 @@ class account_account(models.Model):
                 be_report_id = be_report_entries[0]['report_id'][0]
                 self.write(
                     cr, uid, account.id,
-                    {'financial_report_ids': [(4, be_report_id)]})
+                    {'financial_report_ids': [(4, be_report_id)]},
+                    context=context)
         return acc_id
 
     def write(self, cr, uid, ids, vals, context=None):
